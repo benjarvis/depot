@@ -1,0 +1,18 @@
+{
+    "go.testFlags": ["-v"],
+    "go.testTimeout": "30s",
+    "go.coverOnSave": false,
+    "go.coverageDecorator": {
+        "type": "gutter",
+        "coveredHighlightColor": "rgba(64,128,64,0.5)",
+        "uncoveredHighlightColor": "rgba(128,64,64,0.5)",
+        "coveredGutterStyle": "blockgreen",
+        "uncoveredGutterStyle": "blockred"
+    },
+    "go.testEnvVars": {
+        "CGO_ENABLED": "1"
+    },
+    "go.testExplorer.enable": true,
+    "go.testExplorer.packageDisplayMode": "nested",
+    "go.testExplorer.showOutput": true
+}

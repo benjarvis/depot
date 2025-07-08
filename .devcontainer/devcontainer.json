@@ -1,0 +1,26 @@
+{
+        "name": "depot",
+        "build": {
+                "dockerfile": "Dockerfile",
+        },
+        "customizations": {
+                "vscode": {
+                        // Set *default* container specific settings.json values on container create.
+                        "settings": {},
+                        // Add the IDs of extensions you want installed when the container is created.
+                        "extensions": [
+                                "golang.go",
+                                "anthropic.claude-code"
+                        ]
+                }
+        },
+        "initializeCommand": "mkdir -p \"${localEnv:HOME}${localEnv:USERPROFILE}/.claude\"",
+        "mounts": [
+                "source=${localEnv:HOME}${localEnv:USERPROFILE}/.claude,target=/root/.claude,type=bind,consistency=cached"
+        ],
+        "appPort": [],
+        "forwardPorts": [],
+        "privileged": false,
+        "workspaceMount": "source=${localWorkspaceFolder},target=/depot,type=bind",
+        "workspaceFolder": "/depot"
+}
