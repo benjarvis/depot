@@ -2,12 +2,14 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/depot/depot/internal/docker"
 	"github.com/depot/depot/internal/repository"
 	"github.com/depot/depot/internal/storage"
 	"github.com/depot/depot/pkg/models"
@@ -16,18 +18,20 @@ import (
 )
 
 type Handler struct {
-	db      *bbolt.DB
-	storage storage.Storage
-	logger  *logrus.Logger
-	repoMgr *repository.Manager
+	db            *bbolt.DB
+	storage       storage.Storage
+	logger        *logrus.Logger
+	repoMgr       *repository.Manager
+	dockerManager *docker.Manager
 }
 
-func NewHandler(db *bbolt.DB, storage storage.Storage, logger *logrus.Logger) *Handler {
+func NewHandler(db *bbolt.DB, storage storage.Storage, dockerManager *docker.Manager, logger *logrus.Logger) *Handler {
 	return &Handler{
-		db:      db,
-		storage: storage,
-		logger:  logger,
-		repoMgr: repository.NewManager(db, storage, logger),
+		db:            db,
+		storage:       storage,
+		logger:        logger,
+		repoMgr:       repository.NewManager(db, storage, logger),
+		dockerManager: dockerManager,
 	}
 }
 
@@ -67,6 +71,40 @@ func (h *Handler) CreateRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// For Docker repositories, validate and parse configuration
+	if repo.Type == models.RepositoryTypeDocker {
+		var config models.DockerRepositoryConfig
+		if repo.Config != nil {
+			if err := json.Unmarshal(repo.Config, &config); err != nil {
+				h.writeError(w, http.StatusBadRequest, "Invalid Docker repository configuration")
+				return
+			}
+		} else {
+			// Set default configuration
+			config = models.DockerRepositoryConfig{
+				HTTPPort:  5000,
+				HTTPSPort: 0,
+				V1Enabled: false,
+			}
+		}
+		
+		// Validate port configuration
+		if config.HTTPPort == 0 && config.HTTPSPort == 0 {
+			// Use default port if none specified
+			config.HTTPPort = 5000
+		}
+		
+		// Check for port conflicts
+		if inUse, conflictRepo := h.dockerManager.IsPortInUse(config.HTTPPort, config.HTTPSPort); inUse {
+			h.writeError(w, http.StatusConflict, fmt.Sprintf("Port already in use by repository %s", conflictRepo))
+			return
+		}
+		
+		// Update repository config
+		configBytes, _ := json.Marshal(config)
+		repo.Config = configBytes
+	}
+
 	if err := h.repoMgr.Create(&repo); err != nil {
 		if err == repository.ErrRepositoryExists {
 			h.writeError(w, http.StatusConflict, "Repository already exists")
@@ -74,6 +112,19 @@ func (h *Handler) CreateRepository(w http.ResponseWriter, r *http.Request) {
 		}
 		h.writeError(w, http.StatusInternalServerError, "Failed to create repository")
 		return
+	}
+	
+	// Start Docker registry if it's a Docker repository
+	if repo.Type == models.RepositoryTypeDocker {
+		var config models.DockerRepositoryConfig
+		json.Unmarshal(repo.Config, &config)
+		
+		if err := h.dockerManager.StartRegistry(&repo, &config); err != nil {
+			// Rollback repository creation
+			h.repoMgr.Delete(repo.Name)
+			h.writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to start Docker registry: %v", err))
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -102,6 +153,25 @@ func (h *Handler) GetRepository(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) DeleteRepository(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	name := vars["name"]
+
+	// Get repository to check if it's a Docker repository
+	repo, err := h.repoMgr.Get(name)
+	if err != nil {
+		if err == repository.ErrRepositoryNotFound {
+			h.writeError(w, http.StatusNotFound, "Repository not found")
+			return
+		}
+		h.writeError(w, http.StatusInternalServerError, "Failed to get repository")
+		return
+	}
+
+	// Stop Docker registry if it's running
+	if repo.Type == models.RepositoryTypeDocker {
+		if err := h.dockerManager.StopRegistry(name); err != nil {
+			h.logger.WithError(err).Errorf("Failed to stop Docker registry for %s", name)
+			// Continue with deletion even if registry stop fails
+		}
+	}
 
 	if err := h.repoMgr.Delete(name); err != nil {
 		if err == repository.ErrRepositoryNotFound {
@@ -144,7 +214,29 @@ func (h *Handler) HandleRepository(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleDockerRepository(w http.ResponseWriter, r *http.Request, repo *models.Repository) {
-	h.writeError(w, http.StatusNotImplemented, "Docker repository support not yet implemented")
+	// Docker repositories should be accessed via their dedicated ports
+	var config models.DockerRepositoryConfig
+	if err := json.Unmarshal(repo.Config, &config); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "Invalid Docker repository configuration")
+		return
+	}
+	
+	// Provide information about the Docker registry endpoint
+	port := config.HTTPPort
+	scheme := "http"
+	if config.HTTPSPort > 0 {
+		port = config.HTTPSPort
+		scheme = "https"
+	}
+	
+	response := map[string]interface{}{
+		"message": "Docker repository should be accessed via Docker Registry API",
+		"endpoint": fmt.Sprintf("%s://localhost:%d/v2/", scheme, port),
+		"repository": repo.Name,
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
 
 func (h *Handler) handleRawRepository(w http.ResponseWriter, r *http.Request, repo *models.Repository) {

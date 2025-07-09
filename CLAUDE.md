@@ -111,7 +111,11 @@ curl -k -X POST https://localhost:8443/api/v1/repositories \
     -d '{
         "name": "my-docker-repo",
         "type": "docker",
-        "description": "My docker registry"
+        "description": "My docker registry",
+        "config": {
+            "http_port": 5000,
+            "https_port": 0
+        }
     }'
 ```
 
@@ -171,13 +175,25 @@ golangci-lint run
 - **internal/api**: REST API handlers
 - **internal/repository**: Repository management
 - **internal/storage**: Artifact storage abstraction
+- **internal/docker**: Docker Registry V2 API implementation
 - **pkg/models**: Shared data models
+
+## Docker Registry Support
+
+Depot now supports Docker registries with the full Docker Registry V2 API:
+
+- **Multiple registries**: Each Docker repository can run on its own port
+- **Main port support**: One repository can be configured with port 0 to use the main server port
+- **Full API support**: Push, pull, manifest lists, multi-arch images
+- **OCI compatibility**: Supports both Docker and OCI image formats
+
+See [examples/docker-registry.md](examples/docker-registry.md) for usage examples.
 
 ## Next Steps
 
-1. Implement Docker registry API endpoints
-2. Add authentication and authorization
-3. Create CLI administrative tool
-4. Add support for repository groups
-5. Implement cleanup policies
-6. Add metrics and monitoring
+1. Add authentication and authorization
+2. Create CLI administrative tool
+3. Add support for repository groups
+4. Implement cleanup policies and garbage collection
+5. Add metrics and monitoring
+6. Support for registry mirroring and proxying

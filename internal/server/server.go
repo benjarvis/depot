@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -12,18 +13,22 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/depot/depot/internal/api"
+	"github.com/depot/depot/internal/docker"
+	"github.com/depot/depot/internal/repository"
 	"github.com/depot/depot/internal/storage"
+	"github.com/depot/depot/pkg/models"
 	"github.com/sirupsen/logrus"
 	"go.etcd.io/bbolt"
 )
 
 type Server struct {
-	config     *Config
-	logger     *logrus.Logger
-	router     *mux.Router
-	httpServer *http.Server
-	db         *bbolt.DB
-	storage    storage.Storage
+	config          *Config
+	logger          *logrus.Logger
+	router          *mux.Router
+	httpServer      *http.Server
+	db              *bbolt.DB
+	storage         storage.Storage
+	dockerManager   *docker.Manager
 }
 
 func New(config *Config, logger *logrus.Logger) (*Server, error) {
@@ -40,12 +45,16 @@ func New(config *Config, logger *logrus.Logger) (*Server, error) {
 
 	fileStorage := storage.NewFileStorage(filepath.Join(config.DataDir, "artifacts"))
 	
+	// Initialize Docker registry manager (TLS config will be set later)
+	dockerManager := docker.NewManager(fileStorage, nil, logger)
+	
 	s := &Server{
-		config:  config,
-		logger:  logger,
-		router:  mux.NewRouter(),
-		db:      db,
-		storage: fileStorage,
+		config:        config,
+		logger:        logger,
+		router:        mux.NewRouter(),
+		db:            db,
+		storage:       fileStorage,
+		dockerManager: dockerManager,
 	}
 
 	s.setupRoutes()
@@ -54,7 +63,7 @@ func New(config *Config, logger *logrus.Logger) (*Server, error) {
 }
 
 func (s *Server) setupRoutes() {
-	apiHandler := api.NewHandler(s.db, s.storage, s.logger)
+	apiHandler := api.NewHandler(s.db, s.storage, s.dockerManager, s.logger)
 	
 	apiRouter := s.router.PathPrefix("/api/v1").Subrouter()
 	apiRouter.HandleFunc("/health", apiHandler.Health).Methods("GET")
@@ -65,6 +74,9 @@ func (s *Server) setupRoutes() {
 	
 	repoRouter := s.router.PathPrefix("/repository").Subrouter()
 	repoRouter.PathPrefix("/").HandlerFunc(apiHandler.HandleRepository)
+	
+	// Check if any Docker repository is configured to use port 0 (main server port)
+	s.setupDockerRegistryOnMainPort()
 }
 
 func (s *Server) Start(ctx context.Context) error {
@@ -115,6 +127,12 @@ func (s *Server) Start(ctx context.Context) error {
 		// Update TLS config with certificate
 		s.httpServer.TLSConfig.Certificates = []tls.Certificate{cert}
 		
+		// Update Docker manager with the loaded TLS config
+		s.dockerManager = docker.NewManager(s.storage, s.httpServer.TLSConfig, s.logger)
+		
+		// Start existing Docker repositories
+		s.startExistingDockerRepositories()
+		
 		// Use Serve instead of ServeTLS since we already have a TLS listener
 		if err := s.httpServer.Serve(tlsListener); err != nil && err != http.ErrServerClosed {
 			errChan <- err
@@ -148,6 +166,11 @@ func (s *Server) shutdown() error {
 		s.logger.WithError(err).Error("Failed to shutdown HTTP server")
 	}
 
+	// Stop all Docker registries
+	if err := s.dockerManager.StopAll(); err != nil {
+		s.logger.WithError(err).Error("Failed to stop Docker registries")
+	}
+
 	if err := s.db.Close(); err != nil {
 		s.logger.WithError(err).Error("Failed to close database")
 		return err
@@ -158,4 +181,68 @@ func (s *Server) shutdown() error {
 
 func (s *Server) GetPort() string {
 	return s.config.Port
+}
+
+func (s *Server) startExistingDockerRepositories() {
+	// Create a repository manager to list existing repositories
+	repoMgr := repository.NewManager(s.db, s.storage, s.logger)
+	
+	repos, err := repoMgr.List()
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to list repositories")
+		return
+	}
+	
+	for _, repo := range repos {
+		if repo.Type == models.RepositoryTypeDocker {
+			var config models.DockerRepositoryConfig
+			if err := json.Unmarshal(repo.Config, &config); err != nil {
+				s.logger.WithError(err).Errorf("Failed to unmarshal Docker config for %s", repo.Name)
+				continue
+			}
+			
+			// Skip if port is 0 (will be served on main port)
+			if config.HTTPPort == 0 && config.HTTPSPort == 0 {
+				continue
+			}
+			
+			if err := s.dockerManager.StartRegistry(repo, &config); err != nil {
+				s.logger.WithError(err).Errorf("Failed to start Docker registry for %s", repo.Name)
+			}
+		}
+	}
+}
+
+func (s *Server) setupDockerRegistryOnMainPort() {
+	// Create a repository manager to list existing repositories
+	repoMgr := repository.NewManager(s.db, s.storage, s.logger)
+	
+	repos, err := repoMgr.List()
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to list repositories for main port setup")
+		return
+	}
+	
+	for _, repo := range repos {
+		if repo.Type == models.RepositoryTypeDocker {
+			var config models.DockerRepositoryConfig
+			if err := json.Unmarshal(repo.Config, &config); err != nil {
+				s.logger.WithError(err).Errorf("Failed to unmarshal Docker config for %s", repo.Name)
+				continue
+			}
+			
+			// Check if this repository should be served on main port
+			if config.HTTPPort == 0 && config.HTTPSPort == 0 {
+				// Create a registry instance for this repository
+				registry := docker.NewRegistry(repo, &config, s.storage, s.logger)
+				
+				// Mount the Docker registry routes on the main router
+				// The registry's router is already set up with the correct paths
+				s.router.PathPrefix("/v2/").Handler(registry.GetRouter())
+				
+				s.logger.WithField("repository", repo.Name).Info("Docker registry mounted on main server port")
+				break // Only one repository can use the main port
+			}
+		}
+	}
 }

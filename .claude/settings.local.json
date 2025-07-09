@@ -11,7 +11,10 @@
       "Bash(grep:*)",
       "Bash(CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags=\"-w -s\" -o depot-test ./cmd/depot)",
       "Bash(CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -ldflags=\"-w -s\" -o depot-test ./cmd/depot)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(go get:*)",
+      "Bash(chmod:*)",
+      "Bash(sed:*)"
     ],
     "deny": []
   }
