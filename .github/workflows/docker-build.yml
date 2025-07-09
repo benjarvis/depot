@@ -26,9 +26,9 @@ jobs:
           - platform: linux/amd64
             runner: ubuntu-24.04
             tag: latest-amd64
-          - platform: linux/arm64
-            runner: ubuntu-24.04-arm
-            tag: latest-arm64
+ #         - platform: linux/arm64
+ #           runner: ubuntu-24.04-arm
+ #           tag: latest-arm64
 
     steps:
       - name: Checkout repository
