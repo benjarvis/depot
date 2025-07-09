@@ -86,7 +86,6 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest
-            type=raw,value=latest-debug
 
       - name: Create and push manifest
         run: |
