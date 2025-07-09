@@ -1,0 +1,41 @@
+# Git files
+.git
+.gitignore
+.github
+
+# Build artifacts
+/depot
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test files
+*_test.go
+test/
+examples/
+
+# Documentation
+*.md
+LICENSE
+
+# IDE files
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Coverage files
+*.out
+coverage.txt
+coverage.html

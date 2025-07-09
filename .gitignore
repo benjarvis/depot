@@ -1,4 +1,5 @@
 *.local.json
 .DS_Store
 Thumbs.db
-depot
+# Only ignore the binary at the root, not the cmd/depot directory
+/depot
