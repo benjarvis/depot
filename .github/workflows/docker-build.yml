@@ -92,6 +92,5 @@ jobs:
         run: |
           for tag in $(echo "${{ steps.meta.outputs.tags }}" | tr '\n' ' '); do
             docker buildx imagetools create -t $tag \
-                ${tag}-amd64 \
-                ${tag}-arm64
+                ${tag}-amd64 # ${tag}-arm64
           done
